@@ -45,7 +45,11 @@ struct program_args {
     char *query;
     char *ns;
     char *delim;
+    char *path;
+    char *method;	
 };
+
+int OPT_DELETE = 0;
 
 static void parse_args(int argc, char *argv[], struct program_args *pmyargs)
 {
@@ -55,50 +59,76 @@ static void parse_args(int argc, char *argv[], struct program_args *pmyargs)
     int argc_new;
     char **argv_new;
 
+
     struct poptOption long_options[] = {
-	POPT_AUTOHELP
-	POPT_COMMON_SAMBA
-	POPT_COMMON_CONNECTION
-	POPT_COMMON_CREDENTIALS
-	POPT_COMMON_VERSION
-        {"namespace", 0, POPT_ARG_STRING, &pmyargs->ns, 0,
-         "WMI namespace, default to root\\cimv2", 0},
-	{"delimiter", 0, POPT_ARG_STRING, &pmyargs->delim, 0,
-	 "delimiter to use when querying multiple values, default to '|'", 0},
-	POPT_TABLEEND
+		POPT_AUTOHELP
+		POPT_COMMON_SAMBA
+		POPT_COMMON_CONNECTION
+		POPT_COMMON_CREDENTIALS
+		POPT_COMMON_VERSION
+		{"namespace", 0, POPT_ARG_STRING, &pmyargs->ns, 0, "WMI namespace, default to root\\cimv2", 0},
+		{"delimiter", 0, POPT_ARG_STRING, &pmyargs->delim, 0, "delimiter to use when querying multiple values, default to '|'", 0},
+		{"host", 0, POPT_ARG_STRING, &pmyargs->hostname, 0, "WMI Host", 0},
+		{"query", 0, POPT_ARG_STRING, &pmyargs->query, 0, "WMI Query", 0},
+		{"path", 0, POPT_ARG_STRING, &pmyargs->path, 0, "WMI Object Path", 0},
+		{"call", 0, POPT_ARG_STRING, &pmyargs->method, 0, "WMI Object Call Method", 0},
+		{"delete", 0, POPT_ARG_NONE, &OPT_DELETE, 0, "WMI Object Delete Instance"},
+		POPT_TABLEEND
     };
 
     pc = poptGetContext("wmi", argc, (const char **) argv,
 	        long_options, POPT_CONTEXT_KEEP_FIRST);
 
-    poptSetOtherOptionHelp(pc, "//host query\n\nExample: wmic -U [domain/]adminuser%password //host \"select * from Win32_ComputerSystem\"");
+    poptSetOtherOptionHelp(pc, 
+			"\n\nExamples:\
+			\n    wmic -U [domain/]adminuser%password --host hostname --query \"select * from Win32_ComputerSystem\"\
+			\n    wmic -U [domain/]adminuser%password --host hostname --path \"Win32_OperatingSystem\" --call Reboot arg1 arg2\
+			\n    wmic -U [domain/]adminuser%password --host hostname --path \"Win32_PrintJob.Name='Job Name'\" --delete"
+			);
 
     while ((opt = poptGetNextOpt(pc)) != -1) {
-	poptPrintUsage(pc, stdout, 0);
-	poptFreeContext(pc);
-	exit(1);
+		poptPrintUsage(pc, stdout, 0);
+		poptFreeContext(pc);
+		exit(1);
     }
 
     argv_new = discard_const_p(char *, poptGetArgs(pc));
 
     argc_new = argc;
     for (i = 0; i < argc; i++) {
-	if (argv_new[i] == NULL) {
-	    argc_new = i;
-	    break;
+		if (argv_new[i] == NULL) {
+			argc_new = i;
+			break;
+		}
+    }
+
+	if (pmyargs->hostname == NULL) {
+		poptPrintUsage(pc, stdout, 0);
+		poptFreeContext(pc);
+		exit(1);
 	}
-    }
 
-    if (argc_new != 3
-	|| strncmp(argv_new[1], "//", 2) != 0) {
-	poptPrintUsage(pc, stdout, 0);
-	poptFreeContext(pc);
-	exit(1);
-    }
+	if (pmyargs->query==NULL && pmyargs->method==NULL && !OPT_DELETE) {
+		// one of query, method or delete is required
+		poptPrintUsage(pc, stdout, 0);
+		poptFreeContext(pc);
+		exit(1);
+	}
 
-    /* skip over leading "//" in host name */
-    pmyargs->hostname = argv_new[1] + 2;
-    pmyargs->query = argv_new[2];
+	if ((pmyargs->method!=NULL || OPT_DELETE) && pmyargs->path==NULL) {
+		// path is required
+		poptPrintUsage(pc, stdout, 0);
+		poptFreeContext(pc);
+		exit(1);
+	}
+
+/*
+    if (argc_new != 3 || strncmp(argv_new[1], "//", 2) != 0) {
+		poptPrintUsage(pc, stdout, 0);
+		poptFreeContext(pc);
+		exit(1);
+    }*/
+
     poptFreeContext(pc);
 }
 
@@ -167,6 +197,8 @@ int main(int argc, char **argv)
 	struct program_args args = {};
 	uint32_t cnt = 5, ret;
 	char *class_name = NULL;
+	char *key_name = NULL;
+	char *key_value = NULL;
 	WERROR result;
 	NTSTATUS status;
 	struct IWbemServices *pWS = NULL;
@@ -195,43 +227,120 @@ int main(int argc, char **argv)
 	result = WBEM_ConnectServer(ctx, args.hostname, args.ns, 0, 0, 0, 0, 0, 0, &pWS);
 	WERR_CHECK("Login to remote object.");
 
-	struct IEnumWbemClassObject *pEnum = NULL;
-	result = IWbemServices_ExecQuery(pWS, ctx, "WQL", args.query, WBEM_FLAG_RETURN_IMMEDIATELY | WBEM_FLAG_ENSURE_LOCATABLE, NULL, &pEnum);
-	WERR_CHECK("WMI query execute.");
+	struct IWbemClassObject *wco = NULL;
+	struct IWbemClassObject *inc, *outc, *in;
+	struct IWbemClassObject *out = NULL;
 
-	IEnumWbemClassObject_Reset(pEnum, ctx);
-	WERR_CHECK("Reset result of WMI query.");
+	if (OPT_DELETE) {
+		result = IWbemServices_DeleteInstance(pWS, ctx, args.path, 0, NULL, NULL);
+		WERR_CHECK("WMI delete.");
+	}
+	else if (args.method != NULL) {
 
-	do {
-		uint32_t i, j;
-		struct WbemClassObject *co[cnt];
+		printf("get process\n");
+	result = IWbemServices_GetObject(pWS, ctx, "Win32_Process", WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
+	WERR_CHECK("GetObject.");
 
-		result = IEnumWbemClassObject_SmartNext(pEnum, ctx, 0xFFFFFFFF, cnt, co, &ret);
-		/* WERR_BADFUNC is OK, it means only that there is less returned objects than requested */
-		if (!W_ERROR_EQUAL(result, WERR_BADFUNC)) {
-			WERR_CHECK("Retrieve result data.");
-		} else {
-			DEBUG(1, ("OK   : Retrieved less objects than requested (it is normal).\n"));
-		}
-		if (!ret) break;
+		printf("get process method\n");
 
-		for (i = 0; i < ret; ++i) {
-			if (!class_name || strcmp(co[i]->obj_class->__CLASS, class_name)) {
-				if (class_name) talloc_free(class_name);
-				class_name = talloc_strdup(ctx, co[i]->obj_class->__CLASS);
-				printf("CLASS: %s\n", class_name);
-				for (j = 0; j < co[i]->obj_class->__PROPERTY_COUNT; ++j)
-					printf("%s%s", j?args.delim:"", co[i]->obj_class->properties[j].name);
+	result = IWbemClassObject_GetMethod(wco, ctx, "Create", 0, &inc, &outc);
+	WERR_CHECK("IWbemClassObject_GetMethod.");
+
+
+		// TBD Add args
+		printf("get object\n");
+
+		result = IWbemServices_GetObject(pWS, ctx, args.path, WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
+		WERR_CHECK("GetObject.");
+
+		printf("%s\n", args.path);
+
+		printf("%s\n", args.method);
+
+		printf("get method\n");
+
+		result = IWbemClassObject_GetMethod(wco, ctx, args.method, 0, &inc, &outc);
+		WERR_CHECK("IWbemClassObject_GetMethod.");
+
+		printf("spawn\n");
+
+		result = IWbemClassObject_SpawnInstance(inc, ctx, 0, &in);
+		WERR_CHECK("IWbemClassObject_SpawnInstance.");
+
+		printf("put arg\n");
+
+		union CIMVAR v;
+		v.v_string = "Automatic";
+		result = IWbemClassObject_Put(in, ctx, "StartMode", 0, &v, 0);
+		WERR_CHECK("IWbemClassObject_Put(CommandLine).");
+
+		printf("exec\n");
+
+		result = IWbemServices_ExecMethod(pWS, ctx, args.path, args.method, 0, NULL, in, &out, NULL);
+		WERR_CHECK("WMI method execute.");
+	}
+	else {
+
+		struct IEnumWbemClassObject *pEnum = NULL;
+		result = IWbemServices_ExecQuery(pWS, ctx, "WQL", args.query, WBEM_FLAG_RETURN_IMMEDIATELY | WBEM_FLAG_ENSURE_LOCATABLE, NULL, &pEnum);
+		WERR_CHECK("WMI query execute.");
+
+		IEnumWbemClassObject_Reset(pEnum, ctx);
+		WERR_CHECK("Reset result of WMI query.");
+
+		do {
+			uint32_t i, j, k, key_index;
+			struct WbemClassObject *co[cnt];
+
+			result = IEnumWbemClassObject_SmartNext(pEnum, ctx, 0xFFFFFFFF, cnt, co, &ret);
+			if (!W_ERROR_EQUAL(result, WERR_BADFUNC)) {
+				WERR_CHECK("Retrieve result data.");
+			} else {
+				DEBUG(1, ("OK   : Retrieved less objects than requested (it is normal).\n"));
+			}
+			if (!ret) break;
+
+			for (i = 0; i < ret; ++i) {
+				if (!class_name || strcmp(co[i]->obj_class->__CLASS, class_name)) {
+					if (class_name) talloc_free(class_name);
+					class_name = talloc_strdup(ctx, co[i]->obj_class->__CLASS);
+	//				printf("CLASS: %s\n", class_name);
+					for (j = 0; j < co[i]->obj_class->__PROPERTY_COUNT; ++j) {
+						printf("%s%s", j?args.delim:"", co[i]->obj_class->properties[j].name);
+
+						for (k = 0; k < co[i]->obj_class->properties[j].desc->qualifiers.count; ++k) {
+							if (!strcmp(co[i]->obj_class->properties[j].desc->qualifiers.item[k]->name, "key")) {
+								printf("IS KEY");
+								if (key_name) talloc_free(key_name);
+								key_name = talloc_strdup(ctx, co[i]->obj_class->properties[j].name);
+								key_index = j;
+							}
+						}
+					}
+					printf("%s%s", args.delim,"ObjectClass");
+					printf("%s%s", args.delim,"ObjectPath");
+					printf("\n");
+				}
+
+				for (j = 0; j < co[i]->obj_class->__PROPERTY_COUNT; ++j) {
+					char *s;
+					s = string_CIMVAR(ctx, &co[i]->instance->data[j], co[i]->obj_class->properties[j].desc->cimtype & CIM_TYPEMASK);
+					printf("%s%s", j?args.delim:"", s);
+					if (j==key_index) {
+						key_value = s;
+					}
+				}
+
+				printf("%s%s", args.delim,class_name);
+				printf("%s%s.%s='%s'", args.delim,class_name, key_name, key_value);
+
+
 				printf("\n");
 			}
-			for (j = 0; j < co[i]->obj_class->__PROPERTY_COUNT; ++j) {
-				char *s;
-				s = string_CIMVAR(ctx, &co[i]->instance->data[j], co[i]->obj_class->properties[j].desc->cimtype & CIM_TYPEMASK);
-				printf("%s%s", j?args.delim:"", s);
-			}
-			printf("\n");
-		}
-	} while (ret == cnt);
+		} while (ret == cnt);
+	}
+
+
 	talloc_free(ctx);
 	return 0;
 error:

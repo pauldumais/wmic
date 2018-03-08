@@ -561,10 +561,10 @@ interface IWbemClassObject : IUnknown
         );
 
     WERROR DeleteInstance(
-//        [in] BSTR strObjectPath,
-//        [in] long lFlags
-//        [in]  IWbemContext* pCtx,
-//        [out, OPTIONAL] IWbemCallResult** ppCallResult
+        [in] BSTR strObjectPath,
+        [in] long lFlags,
+        [in,unique] IWbemContext* pCtx,
+        [in,out,unique] IWbemCallResult** ppCallResult
         );
 
     WERROR DeleteInstanceAsync(

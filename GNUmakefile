@@ -52,8 +52,20 @@ $(DESTDIR)$(ZENBIN) $(DESTDIR)$(PYLIBDIR):
 
 clean:
 	-cd Samba/source && make distclean
+	rm -f pysamba/version.pyc
+	rm -f Samba/source/pywmi-build
+	rm -f Samba/source/include/config_tmp.h.in
+	rm -f Samba/source/winexe/libwincmd.dylib.0.80
+	rm -f Samba/source/wmi/libwmiclient.dylib.1.3.14
+	rm -f Samba/source/build/smb_build/config.pm
+	rm -f Samba/source/heimdal/lib/gssapi/gkrb5_err.c
+	rm -f Samba/source/heimdal/lib/gssapi/gkrb5_err.h
+	rm -f Samba/source/configure
+	rm -f Samba/source/extra_cflags.txt
+	rm -f Samba/source/version.h 
 	rm -f Samba/source/bin/shared/* 
 	rm -f Samba/source/bin/static/* 
+	rm -f Samba/source/bin/pkgconfig/* 
 	rm -f Samba/source/heimdal/lib/des/hcrypto
 
 tarball:
