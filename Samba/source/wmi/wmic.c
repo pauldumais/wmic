@@ -237,18 +237,8 @@ int main(int argc, char **argv)
 	}
 	else if (args.method != NULL) {
 
-		printf("get process\n");
-	result = IWbemServices_GetObject(pWS, ctx, "Win32_Process", WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
-	WERR_CHECK("GetObject.");
-
-		printf("get process method\n");
-
-	result = IWbemClassObject_GetMethod(wco, ctx, "Create", 0, &inc, &outc);
-	WERR_CHECK("IWbemClassObject_GetMethod.");
-
-
 		// TBD Add args
-		printf("get object\n");
+		/*printf("get process\n");
 
 		result = IWbemServices_GetObject(pWS, ctx, args.path, WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
 		WERR_CHECK("GetObject.");
@@ -275,7 +265,7 @@ int main(int argc, char **argv)
 		WERR_CHECK("IWbemClassObject_Put(CommandLine).");
 
 		printf("exec\n");
-
+*/
 		result = IWbemServices_ExecMethod(pWS, ctx, args.path, args.method, 0, NULL, in, &out, NULL);
 		WERR_CHECK("WMI method execute.");
 	}
