@@ -19,9 +19,11 @@
 
 #include "includes.h"
 #include "lib/cmdline/popt_common.h"
+#include "auth/credentials/credentials.h"
 #include "librpc/rpc/dcerpc.h"
 #include "librpc/gen_ndr/ndr_oxidresolver.h"
 #include "librpc/gen_ndr/ndr_oxidresolver_c.h"
+#include "librpc/gen_ndr/dcom.h"
 #include "librpc/gen_ndr/ndr_dcom.h"
 #include "librpc/gen_ndr/ndr_dcom_c.h"
 #include "librpc/gen_ndr/ndr_remact_c.h"
@@ -34,9 +36,6 @@
 #include "lib/com/dcom/proto.h"
 
 #include "wmi/wmi.h"
-
-struct WBEMCLASS;
-struct WBEMOBJECT;
 
 #include "wmi/proto.h"
 
@@ -219,6 +218,7 @@ int main(int argc, char **argv)
 	dcom_proxy_IRemUnknown_init();
 	dcom_proxy_IWbemFetchSmartEnum_init();
 	dcom_proxy_IWbemWCOSmartEnum_init();
+	dcom_proxy_IWbemClassObject_init();
 
 	struct com_context *ctx = NULL;
 	com_init_ctx(&ctx, NULL);
@@ -234,13 +234,16 @@ int main(int argc, char **argv)
 	if (OPT_DELETE) {
 		result = IWbemServices_DeleteInstance(pWS, ctx, args.path, 0, NULL, NULL);
 		WERR_CHECK("WMI delete.");
+
 	}
 	else if (args.method != NULL) {
 
-		// TBD Add args
-		/*printf("get process\n");
+		union CIMVAR v;
 
-		result = IWbemServices_GetObject(pWS, ctx, args.path, WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
+		// TBD Add args
+/*		printf("get object\n");
+
+		result = IWbemServices_GetObject(pWS, ctx, "Win32_Service", WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
 		WERR_CHECK("GetObject.");
 
 		printf("%s\n", args.path);
@@ -259,15 +262,37 @@ int main(int argc, char **argv)
 
 		printf("put arg\n");
 
-		union CIMVAR v;
 		v.v_string = "Automatic";
 		result = IWbemClassObject_Put(in, ctx, "StartMode", 0, &v, 0);
-		WERR_CHECK("IWbemClassObject_Put(CommandLine).");
+		WERR_CHECK("IWbemClassObject_Put.");
 
 		printf("exec\n");
 */
 		result = IWbemServices_ExecMethod(pWS, ctx, args.path, args.method, 0, NULL, in, &out, NULL);
 		WERR_CHECK("WMI method execute.");
+
+		result = WbemClassObject_Get(out->object_data, ctx, "ReturnValue", 0, &v, 0, 0);
+		WERR_CHECK("ReturnValue.");
+//		*ret_code = v.v_uint32;
+		printf("%i", v.v_uint32);	
+/*
+			result = IWbemServices_GetObject(pWS, ctx, "Win32_Process", WBEM_FLAG_RETURN_WBEM_COMPLETE, NULL, &wco, NULL);
+	WERR_CHECK("GetObject.");
+
+	result = IWbemClassObject_GetMethod(wco, ctx, "Create", 0, &inc, &outc);
+	WERR_CHECK("IWbemClassObject_GetMethod.");
+
+	result = IWbemClassObject_SpawnInstance(inc, ctx, 0, &in);
+	WERR_CHECK("IWbemClassObject_SpawnInstance.");
+
+	union CIMVAR v;
+	v.v_string = "notepad.exe";
+	result = IWbemClassObject_Put(in, ctx, "CommandLine", 0, &v, 0);
+	WERR_CHECK("IWbemClassObject_Put(CommandLine).");
+
+	result = IWbemServices_ExecMethod(pWS, ctx, "Win32_Process", "Create", 0, NULL, in, &out, NULL);
+	WERR_CHECK("IWbemServices_ExecMethod.");
+	*/
 	}
 	else {
 
